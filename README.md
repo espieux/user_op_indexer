@@ -1,9 +1,29 @@
 # Running the project
 1. Ensure you have rust installed
-2. Run the following commands
+2. Clone the project
 ```bash
 git clone https://github.com/espieux/user_op_indexer.git
 cd user_op_indexer
+```
+3. Create a .env file at project's root following .env.example template
+4. Run the following in your SQL editor
+```SQL
+CREATE TABLE user_operation_events (
+    id SERIAL PRIMARY KEY,                           
+    user_op_hash CHAR(66) NOT NULL,                  
+    sender CHAR(42) NOT NULL,                        
+    paymaster CHAR(42) NOT NULL,                    
+    nonce VARCHAR(66) NOT NULL,                   
+    success BOOLEAN NOT NULL,                        
+    actual_gas_cost NUMERIC(78, 0) NOT NULL,         
+    actual_gas_used NUMERIC(78, 0) NOT NULL,         
+    block_number BIGINT NOT NULL,                    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  
+    CONSTRAINT unique_user_op UNIQUE (user_op_hash, nonce) 
+);
+```
+5. Start the indexer
+```bash
 cargo build
 cargo run
 ```
