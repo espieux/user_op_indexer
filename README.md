@@ -1,7 +1,9 @@
 # Running the project
+1. Ensure you have rust installed
+2. Run the following commands
 ```bash
-git clone
-cd
+git clone https://github.com/espieux/user_op_indexer.git
+cd user_op_indexer
 cargo build
 cargo run
 ```
