@@ -1,0 +1,15 @@
+[package]
+name = "user_op_indexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethers = { version = "2.0", features = ["abigen", "ws"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "json", "tls-native-tls"] }
+eyre = "0.6"
+futures-util = "0.3"
+dotenv = "0.15"
