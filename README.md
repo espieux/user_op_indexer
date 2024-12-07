@@ -28,6 +28,59 @@ cargo build
 cargo run
 ```
 
+# Overview
+## Preview of the dataset
+![alt text](./assets/image.png)
+## Retrieve user operation details by hash
+```SQL
+SELECT user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+FROM user_operation_events
+WHERE user_op_hash = '0x255849318ca696091bffdcebe17d8933a49ea480774c6014484ae2c192cf4959'; -- Replace with the actual userOpHash
+```
+### Preview
+![alt text](./assets/image-1.png)
+## User operations for specific sender address
+```SQL
+SELECT user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+FROM user_operation_events
+WHERE sender = '0x487543ea98a41f9230a6c78e6fe6e93d66bad230'; -- Replace with the actual sender address
+```
+### Preview
+![alt text](./assets/image-2.png)
+## User operations for specific paymaster
+```SQL
+SELECT user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+FROM user_operation_events
+WHERE paymaster = '0x0000000000000039cd5e8ae05257ce51c473ddd1'; -- Replace with the actual paymaster address
+```
+### Preview
+![alt text](./assets/image-3.png)
+## User operations within specific block range
+```SQL
+SELECT user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+FROM user_operation_events
+WHERE block_number BETWEEN 21300000 AND 21350000; -- Replace with your desired block range
+```
+### Preview
+![alt text](./assets/image-4.png)
+## Failed user operations with detailed info
+```SQL
+SELECT user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+FROM user_operation_events
+WHERE success = false; -- Replace with `false` if querying for failed transactions
+```
+### Preview
+![alt text](./assets/image-5.png)
+## Combined query successful operations by specific sender within block range
+```SQL
+SELECT user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+FROM user_operation_events
+WHERE sender = '0x4631b4a48d2e8f9974970967676ceeb9135f3331'
+  AND success = true
+  AND block_number BETWEEN 21300000 AND 21350000;
+```
+### Preview
+![alt text](./assets/image-6.png)
 # Workshop: Indexing UserOperationEvent from EntryPoint Contract
 **Duration**: 3 heures
 **Objectif**: Développer un indexeur pour les événements UserOperationEvent de l'EntryPoint ERC-4337 (address: 0x0000000071727de22e5e9d8baf0edac6f37da032)  (topic: 0x49628fd1471006c1482da88028e9ce4dbb080b815c9b0344d39e5a8e6ec1419f)
