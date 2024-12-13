@@ -27,6 +27,16 @@ CREATE TABLE user_operation_events (
 cargo build
 cargo run
 ```
+Optionally you can set the log level like the following:
+```bash
+RUST_LOG=DEBUG cargo run
+```
+Available log levels are:
+-  ERROR
+-  WARN
+-  INFO
+-  DEBUG (default)
+-  TRACE
 
 # Overview
 ## Preview of the dataset

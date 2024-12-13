@@ -5,6 +5,41 @@ use futures_util::StreamExt;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use eyre::Result;
+use tracing::{info, warn, error, debug};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+// Keep the existing UserOperationEvent struct
+
+fn init_tracing() {
+    // Get log level from environment variable with defaults
+    let log_level = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| "INFO".to_string())
+        .to_uppercase();
+
+    // Parse log level
+    let level = match log_level.as_str() {
+        "ERROR" => tracing::Level::ERROR,
+        "WARN" => tracing::Level::WARN,
+        "INFO" => tracing::Level::INFO,
+        "DEBUG" => tracing::Level::DEBUG,
+        "TRACE" => tracing::Level::TRACE,
+        _ => tracing::Level::INFO, // Default to INFO
+    };
+
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_thread_names(true)
+        )
+        .with(tracing_subscriber::filter::LevelFilter::from(level))
+        .init();
+
+    info!("Tracing initialized at level: {}", level);
+}
+
 
 #[derive(Debug, Clone, EthEvent)]
 #[ethevent(
@@ -23,33 +58,92 @@ struct UserOperationEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize tracing first
+    init_tracing();
+
+    // Load environment variables
     dotenv::dotenv().ok();
-    let rpc_url = std::env::var("RPC_URL")?;
-    let provider: Provider<Ws> = Provider::connect(rpc_url).await?;
+
+    // Get RPC URL
+    let rpc_url = std::env::var("RPC_URL")
+        .map_err(|e| {
+            error!("Failed to get RPC_URL: {}", e);
+            e
+        })?;
+
+    // Connect to provider
+    let provider: Provider<Ws> = Provider::connect(rpc_url).await
+        .map_err(|e| {
+            error!("Failed to connect to provider: {}", e);
+            e
+        })?;
     let provider = Arc::new(provider);
 
     // Verify the Connection to Ethereum
-    let block_number = provider.get_block_number().await?;
-    println!("Connected to Ethereum. Latest block: {:?}", block_number);
+    let block_number = provider.get_block_number().await
+        .map_err(|e| {
+            error!("Failed to get block number: {}", e);
+            e
+        })?;
+    info!("Connected to Ethereum. Latest block: {}", block_number);
 
-    let entry_point_address: Address = "0x0000000071727De22E5E9d8BAf0edAc6f37da032".parse()?;
+    // Entry point address
+    let entry_point_address: Address = "0x0000000071727De22E5E9d8BAf0edAc6f37da032".parse()
+        .map_err(|e| {
+            error!("Failed to parse entry point address: {}", e);
+            e
+        })?;
 
-    // Verify the Contract Connection
+    // Compute topic0 for verification
     let computed_topic0 = H256::from_slice(
         &ethers::utils::keccak256("UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)")[..],
     );
-    println!("Computed topic0: {:?}", computed_topic0);
+    debug!("Computed topic0: {:?}", computed_topic0);
 
-    let db_url = std::env::var("DATABASE_URL")?;
-    let db_pool = PgPoolOptions::new().max_connections(5).connect(&db_url).await?;
+    // Database connection
+    let db_url = std::env::var("DATABASE_URL")
+        .map_err(|e| {
+            error!("Failed to get DATABASE_URL: {}", e);
+            e
+        })?;
+    let db_pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to database: {}", e);
+            e
+        })?;
 
-    // Check the Database Connection
-    let result = sqlx::query!("SELECT 1 as value").fetch_one(&db_pool).await?;
-    println!("Test query result: {:?}", result.value);
+    // Test database connection
+    let result = sqlx::query!("SELECT 1 as value")
+        .fetch_one(&db_pool)
+        .await
+        .map_err(|e| {
+            error!("Database connection test failed: {}", e);
+            e
+        })?;
+    info!("Database connection test successful: {:?}", result.value);
 
-    let start_block: u64 = std::env::var("START_BLOCK")?.parse()?;
+    // Get start block
+    let start_block: u64 = std::env::var("START_BLOCK")
+        .map_err(|e| {
+            error!("Failed to get START_BLOCK: {}", e);
+            e
+        })?
+        .parse()
+        .map_err(|e| {
+            error!("Failed to parse START_BLOCK: {}", e);
+            e
+        })?;
 
-    index_events(provider, db_pool, entry_point_address, start_block).await?;
+    // Index events
+    index_events(provider, db_pool, entry_point_address, start_block).await
+        .map_err(|e| {
+            error!("Event indexing failed: {}", e);
+            e
+        })?;
+
     Ok(())
 }
 
@@ -59,14 +153,15 @@ async fn index_events(
     entry_point_address: Address,
     from_block_number: u64,
 ) -> Result<()> {
-    // Step 1: Fetch Historical Events
+    // Fetch latest block number
     let latest_block_number = provider.get_block_number().await?.as_u64();
 
-    println!(
+    info!(
         "Fetching historical events from block {} to {}",
         from_block_number, latest_block_number
     );
 
+    // Fetch historical logs
     let historical_logs = provider
         .get_logs(&Filter::new()
             .address(entry_point_address)
@@ -75,23 +170,31 @@ async fn index_events(
             ))
             .from_block(BlockNumber::Number(from_block_number.into()))
             .to_block(BlockNumber::Number(latest_block_number.into())))
-        .await?;
+        .await
+        .map_err(|e| {
+            error!("Failed to fetch historical logs: {}", e);
+            e
+        })?;
 
+    // Process historical logs
     for log in historical_logs {
-        // println!("Raw log received: {:?}", log);
         match decode_user_operation_event(&log) {
-            Ok((event,block_number)) => {
-                println!("Historical event: {:?}", event);
-                save_event_to_db(&db_pool, event, block_number).await?;
+            Ok((event, block_number)) => {
+                debug!("Historical event: {:?}", event);
+                save_event_to_db(&db_pool, event, block_number).await
+                    .map_err(|e| {
+                        warn!("Failed to save historical event: {}", e);
+                        e
+                    })?;
             }
             Err(e) => {
-                eprintln!("Error decoding historical event: {:?}", e);
+                warn!("Error decoding historical event: {:?}", e);
             }
         }
     }
 
-    // Step 2: Listen for New Events
-    println!("Listening for new events from block {}", latest_block_number + 1);
+    // Listen for new events
+    info!("Listening for new events from block {}", latest_block_number + 1);
 
     let filter = Filter::new()
         .address(entry_point_address)
@@ -100,17 +203,25 @@ async fn index_events(
         ))
         .from_block(BlockNumber::Number((latest_block_number + 1).into()));
 
-    let mut stream = provider.subscribe_logs(&filter).await?;
+    let mut stream = provider.subscribe_logs(&filter)
+        .await
+        .map_err(|e| {
+            error!("Failed to subscribe to logs: {}", e);
+            e
+        })?;
 
     while let Some(log) = stream.next().await {
-        // println!("Raw log received: {:?}", log);
         match decode_user_operation_event(&log) {
-            Ok((event,block_number)) => {
-                println!("New event: {:?}", event);
-                save_event_to_db(&db_pool, event, block_number).await?;
+            Ok((event, block_number)) => {
+                debug!("New event: {:?}", event);
+                save_event_to_db(&db_pool, event, block_number).await
+                    .map_err(|e| {
+                        warn!("Failed to save new event: {}", e);
+                        e
+                    })?;
             }
             Err(e) => {
-                eprintln!("Error decoding new event: {:?}", e);
+                warn!("Error decoding new event: {:?}", e);
             }
         }
     }
@@ -118,24 +229,29 @@ async fn index_events(
     Ok(())
 }
 
-
 fn decode_user_operation_event(log: &Log) -> Result<(UserOperationEvent, u64), ethers::abi::Error> {
     // Ensure the log contains the expected topics
     if log.topics.len() != 4 {
-        println!("Invalid number of topics: {:?}", log.topics.len());
+        warn!(
+            "Invalid number of topics: expected 4, got {}",
+            log.topics.len()
+        );
         return Err(ethers::abi::Error::InvalidData);
     }
 
-    // Decode indexed fields from `topics`
+    // Decode indexed fields from topics
     let user_op_hash = H256::from(log.topics[1]); // topic[1]: bytes32
     let sender: Address = log.topics[2].into();  // topic[2]: address
     let paymaster: Address = log.topics[3].into(); // topic[3]: address
 
-    // Decode non-indexed fields from `data`
+    // Decode non-indexed fields from data
     let data = &log.data.0;
 
     if data.len() != 128 {
-        println!("Unexpected data length: {:?}", data.len());
+        warn!(
+            "Unexpected data length: expected 128, got {}",
+            data.len()
+        );
         return Err(ethers::abi::Error::InvalidData);
     }
 
@@ -148,8 +264,17 @@ fn decode_user_operation_event(log: &Log) -> Result<(UserOperationEvent, u64), e
     // Get the block number from the log
     let block_number = log
         .block_number
-        .ok_or(ethers::abi::Error::InvalidData)?
+        .ok_or(ethers::abi::Error::InvalidData)
+        .map_err(|e| {
+            warn!("Failed to extract block number from log");
+            e
+        })?
         .as_u64();
+
+    debug!(
+        "Decoded UserOperationEvent: hash={:?}, sender={:?}, paymaster={:?}, nonce={}, success={}, gas_cost={}, gas_used={}, block={}",
+        user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number
+    );
 
     // Construct the UserOperationEvent struct
     Ok((
@@ -169,14 +294,14 @@ fn decode_user_operation_event(log: &Log) -> Result<(UserOperationEvent, u64), e
 async fn save_event_to_db(
     db_pool: &sqlx::PgPool,
     event: UserOperationEvent,
-    block_number: u64, // Pass block number as an argument
+    block_number: u64,
 ) -> Result<()> {
     let user_op_hash = format!("{:?}", event.user_op_hash);
     let sender = format!("{:?}", event.sender);
     let paymaster = format!("{:?}", event.paymaster);
     let nonce = format!("0x{:064x}", event.nonce); // Ensure consistent formatting
 
-    sqlx::query!(
+    match sqlx::query!(
         r#"
         INSERT INTO user_operation_events (user_op_hash, sender, paymaster, nonce, success, actual_gas_cost, actual_gas_used, block_number)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -189,14 +314,31 @@ async fn save_event_to_db(
         event.success,
         event.actual_gas_cost.as_u128() as i64,
         event.actual_gas_used.as_u128() as i64,
-        block_number as i64 // Insert block number
+        block_number as i64
     )
     .execute(db_pool)
-    .await?;
-
-    println!(
-        "Event saved to database (or skipped if duplicate) at block {}",
-        block_number
-    );
-    Ok(())
+    .await
+    {
+        Ok(result) => {
+            if result.rows_affected() > 0 {
+                info!(
+                    "Event saved to database at block {} (user_op_hash: {})",
+                    block_number, user_op_hash
+                );
+            } else {
+                debug!(
+                    "Duplicate event skipped at block {} (user_op_hash: {})",
+                    block_number, user_op_hash
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            error!(
+                "Failed to save event to database (user_op_hash: {}): {}",
+                user_op_hash, e
+            );
+            Err(e.into())
+        }
+    }
 }
